@@ -42,8 +42,16 @@ const styles = StyleSheet.create({
   normal_text: {
     fontSize: medium_font_size,
   },
-  player_container: {
+  player_container_curr_turn: {
     borderWidth: 1,
+    // margin: 1,
+    // borderColor:"white",
+    padding: "1%",
+  },
+  player_container_not_curr_turn: {
+    // borderWidth: 1,
+    margin: 1,
+    // borderColor:"white",
     padding: "1%",
   },
   bold: { fontWeight: "bold", fontSize: medium_font_size },

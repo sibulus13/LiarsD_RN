@@ -91,7 +91,12 @@ export default function PlayScreen({ navigation, route }) {
         {Dices.map((player, i) => {
           return (
             <View
-              style={[styles.center_aligned, styles.player_container]}
+              style={[
+                styles.center_aligned,
+                i === roundNum % num_players
+                  ? styles.player_container_curr_turn
+                  : styles.player_container_not_curr_turn,
+              ]}
               key={i.toString()}
             >
               <Text
