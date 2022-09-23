@@ -2,29 +2,28 @@ import { StyleSheet, Text, View } from "react-native";
 import "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
 import { createMaterialBottomTabNavigator } from "@react-navigation/material-bottom-tabs";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createStackNavigator } from "@react-navigation/stack";
-import StartScreen from "./screens/StartScreen";
 import PlayScreen from "./screens/PlayScreen";
+import MenuScreen from "./screens/MenuScreen";
+import HowToPlayScreen from "./screens/HowToPlayScreen";
+import ModeScreen from "./screens/ModeScreen";
 
 const Tab = createMaterialBottomTabNavigator();
-const Stack = createStackNavigator();
+const Stack = createNativeStackNavigator();
 
 export default function App() {
   return (
     <NavigationContainer>
-      <Tab.Navigator initialRouteName="Start">
-        <Tab.Screen name="Start" component={StartScreen} />
-        <Tab.Screen name="Play" component={PlayScreen} />
-      </Tab.Navigator>
+      <Stack.Navigator
+        initialRouteName="Menu"
+        screenOptions={{ headerShown: false }}
+      >
+        <Stack.Screen name="Menu" component={MenuScreen} />
+        <Stack.Screen name="Play" component={PlayScreen} />
+        <Stack.Screen name="How to play" component={HowToPlayScreen} />
+        <Stack.Screen name="Mode" component={ModeScreen} />
+      </Stack.Navigator>
     </NavigationContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-});

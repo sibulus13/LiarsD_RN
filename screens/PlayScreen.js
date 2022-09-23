@@ -1,11 +1,5 @@
-import { useState } from "react";
-import {
-  View,
-  Text,
-  Button,
-  AsyncStorage,
-  TouchableNativeFeedbackBase,
-} from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { View, Text, Button, Animated } from "react-native";
 import Dice from "../components/Dice";
 import Slider from "@react-native-community/slider";
 import {
@@ -22,30 +16,38 @@ import {
   set_dices_visible,
   is_turn_after_player,
   get_next_valid_claim,
+  initialize_dices_visibility,
+  playDiceRollSound,
 } from "../utils/Dice";
 import styles from "./Styles";
+import { bot_turn, call_strategy_random } from "../utils/Bot";
+import Popup from "../components/Popup";
+import { diceRollingAnimation } from "../utils/Animation";
+import { confirmationSound, diceRollingSound } from "../utils/Audio";
+import { Audio } from "expo-av";
 
 export default function PlayScreen({ navigation, route }) {
-  let mode = route.params.mode ? route.params.mode : "Single";
+  // let mode = route.params.mode ? route.params.mode : "Single";
+  let multiplayer = route.params.multiplayer ? route.params.multiplayer : false;
   let gameType = route.params.mode1 ? route.params.mode : "DM";
   let player_index = route.params.player_index ? route.params.player_index : 0;
   let player_name = route.params.player_name
     ? route.params.player_index
     : `Player 1`;
   let maxGameNum = 10;
-
-  console.log(mode, gameType, player_index, player_name);
+  let dices_info = initialize_dices(num_players, dice_per_player);
+  // console.log(multiplayer, gameType, player_index, player_name);
 
   const [CallFlag, setCallFlag] = useState(false);
-  const [WildCardCalled, setWildCardCalled] = useState(false);
   const [roundNum, setRoundNum] = useState(0);
-  const [GameNum, setGameNum] = useState(0);
+  const [GameNum, setGameNum] = useState(7);
+  const [WildCardCalled, setWildCardCalled] = useState(false);
   const [lastClaim, setlastClaim] = useState(initial_claim);
+  const [callerIndex, setcallerIndex] = useState(initial_claim);
   const [count, setCount] = useState(1);
   const [face, setFace] = useState(1);
-  const [Dices, setDices] = useState(
-    initialize_dices(num_players, dice_per_player)
-  );
+  const [NumDices, setNumDices] = useState(dices_info.num_dices);
+  const [Dices, setDices] = useState(dices_info.dices);
   const [facesVisible, setFacesVisible] = useState(
     initialize_visibility(num_players)
   );
@@ -58,28 +60,63 @@ export default function PlayScreen({ navigation, route }) {
   const [playerScores, setPlayerScores] = useState(
     initialize_scores(num_players)
   );
+  const [ResultsVisible, setResultsVisible] = useState(false);
+  // const [DiceRollingSound, setDiceRollingSound] = useState(false);
+  // const [ActionSound, setActionSound] = useState(false);
+
+  const rotation = useRef(new Animated.Value(0)).current;
+  const spin = rotation.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: [`-30deg`, `0deg`, `30deg`],
+  });
+
+  let is_player_round = roundNum % num_players == 0;
+  useEffect(() => {
+    // const { diceSound } = await Audio.Sound.createAsync(
+    //   require("../Statics/diceRolling.mp3")
+    // );
+    // setDiceRollingSound(diceSound)
+    // const { actionSound } = await Audio.Sound.createAsync(
+    //   require("../Statics/beepboop.wav")
+    // );
+    // setDiceRollingSound(actionSound)
+
+    handle_bot_turn(is_player_round);
+  });
 
   return (
     <View style={styles.AndroidSafeArea}>
-      <Text>{playerNames[roundNum % num_players]}'s Turn</Text>
-      <View>
+      {/* Sensors */}
+      <View style={[styles.dices_container, { flex: 1 }]}>
         {Dices.map((player, i) => {
           return (
-            <View style={[styles.center_aligned]} key={i.toString()}>
-              <Text>
-                {playerNames[i]}: {playerScores[i]} points
+            <View
+              style={[styles.center_aligned, styles.player_container]}
+              key={i.toString()}
+            >
+              <Text
+                style={i == player_index ? [styles.bold] : [styles.normal_text]}
+              >
+                {playerNames[i]} ({playerScores[i]} points)
               </Text>
-              <Text>
-                {is_not_default_claim(playerLastClaims[i])
+              <Text style={[styles.normal_text]}>
+                {roundNum % num_players == i
+                  ? "Deciding..."
+                  : is_not_default_claim(playerLastClaims[i])
                   ? `Last claim: ${playerLastClaims[i].count} ${playerLastClaims[i].face}s`
                   : `No claim`}
               </Text>
               <View style={[styles.dices]}>
                 {player.map((num, j) => {
                   return (
-                    <View key={`${i}${j}`}>
+                    <Animated.View
+                      key={`${i}${j}`}
+                      style={{
+                        transform: [{ rotate: spin }, { perspective: 1000 }],
+                      }}
+                    >
                       <Dice face={num} visible={facesVisible[i]} />
-                    </View>
+                    </Animated.View>
                   );
                 })}
               </View>
@@ -87,12 +124,20 @@ export default function PlayScreen({ navigation, route }) {
           );
         })}
       </View>
+      {/* Actuators */}
       <View style={styles.bottom}>
         <Button
           onPress={
             CallFlag
-              ? () => reset_round()
-              : () => callBluff(player_index, (roundNum - 1) % num_players)
+              ? async () => {
+                  reset_round();
+                  await diceRollingAnimation(rotation, diceRollingSound);
+                }
+              : () =>
+                  handle_bluff_called(
+                    player_index,
+                    (roundNum - 1) % num_players
+                  )
           }
           title={
             CallFlag
@@ -139,7 +184,7 @@ export default function PlayScreen({ navigation, route }) {
           />
         </View>
         <Button
-          onPress={() => submitClaim(count, face, roundNum)}
+          onPress={async () => await submitClaim(count, face, roundNum)}
           title={
             CallFlag
               ? ``
@@ -157,12 +202,54 @@ export default function PlayScreen({ navigation, route }) {
               : true
           }
         />
-        <Button onPress={() => reset_game_state()} title={`Reset`} />
+        <Button
+          onPress={async () => await reset_game_state()}
+          title={`Reset`}
+        />
+        <Button
+          onPress={async () => await diceRollingAnimation(rotation)}
+          title={`Test Button`}
+        />
       </View>
+      <Popup
+        resultsVisible={ResultsVisible}
+        playerScores={playerScores}
+        playerNames={playerNames}
+        backToMenu={() => navigation.navigate("Menu")}
+        resetGame={async () => await reset_game_state()}
+      ></Popup>
     </View>
   );
 
-  function callBluff(index_caller, index_claimer) {
+  async function handle_bot_turn(
+    is_player_round,
+    strategy = "",
+    strategy_args = {}
+  ) {
+    if (!is_player_round) {
+      console.log(roundNum, "robot round");
+      let known_dices = Dices[roundNum % num_players];
+      let unknown_dice_count = NumDices - known_dices.length;
+      let response = await bot_turn(
+        known_dices,
+        unknown_dice_count,
+        lastClaim,
+        call_strategy_random
+      );
+      if (CallFlag) {
+        return;
+      }
+      if (response.call) {
+        let caller_index = roundNum % num_players;
+        handle_bluff_called(caller_index, caller_index - 1);
+      } else {
+        handle_claim(response.claim);
+      }
+    }
+    // return;
+  }
+
+  function handle_bluff_called(index_caller, index_claimer) {
     // add animation
     setCallFlag(true);
     setFacesVisible(set_dices_visible(num_players));
@@ -196,7 +283,7 @@ export default function PlayScreen({ navigation, route }) {
 
     switch (gameType) {
       case `DM`:
-        console.log("DM case of callBluff");
+        console.log("DM case of handle_bluff_called");
         let gain = 1;
         // let newScore = playerScores
         playerScores[indexWinner] += gain;
@@ -204,69 +291,79 @@ export default function PlayScreen({ navigation, route }) {
 
         console.log(playerScores);
         setPlayerScores(playerScores);
-        setGameNum(GameNum + 1);
-        if (GameNum > maxGameNum) {
-          console.log(`Max game num achieved, ending game`);
-          // end game
-        }
         break;
       default:
-        console.log("Default case of callBluff", gameType);
+        console.log("Default case of handle_bluff_called", gameType);
         break;
     }
     // add animation AND delay to signify moving into next round and resetting game state
     setRoundNum(indexLoser);
-    // reset_round(indexLoser);
-    // reset_game_state();
+    setGameNum(GameNum + 1);
+    if (GameNum == maxGameNum - 1) {
+      // End of game reached
+      setResultsVisible(true);
+    }
   }
 
-  function submitClaim(count, face, roundNum) {
+  async function submitClaim(count, face, roundNum) {
     console.log(count, face);
     let validClaim =
       (count >= lastClaim.count && face > lastClaim.face) ||
       count > lastClaim.count;
-    let validPlayerRound = num_players % roundNum == 0;
-    // && validPlayerRound
-    if (validClaim) {
+    let validPlayerRound = roundNum % num_players == 0;
+    if (validClaim && validPlayerRound) {
       // console.log(`setting valid claim`);
       if (face == 1) {
         console.log(`wild card called`);
         setWildCardCalled(true);
       }
       let claim = { count: count, face: face };
-      setlastClaim(claim);
-      setRoundNum(roundNum + 1);
-      let next_valid_claim = get_next_valid_claim(claim);
-      setCount(next_valid_claim.count);
-      setFace(next_valid_claim.face);
-      let last_claims = playerLastClaims;
-      last_claims[roundNum % num_players] = claim;
-      playerLastClaims[roundNum % num_players] = claim;
-      // console.log(last_claims);
-      setplayerLastClaims(last_claims);
-    } else {
-      // Should the player be allowed to try and submit a faulty claim?
-      // Or should the submit button be blanked out for
+      handle_claim(claim);
     }
+    // } else {
+    //   // Should the player be allowed to try and submit a faulty claim?
+    //   // Or should the submit button be blanked out for
+    // }
+    await confirmationSound();
+  }
+
+  function handle_claim(claim) {
+    let last_claims = playerLastClaims;
+    last_claims[roundNum % num_players] = claim;
+    playerLastClaims[roundNum % num_players] = claim;
+    // console.log(last_claims);
+    setRoundNum(roundNum + 1);
+    setplayerLastClaims(last_claims);
+    setlastClaim(claim);
+    let next_valid_claim = get_next_valid_claim(claim);
+    setCount(next_valid_claim.count);
+    setFace(next_valid_claim.face);
   }
 
   function reset_round(indexLoser = 0) {
     console.log(`prep next round`);
-    console.log(num_players, dice_per_player);
+    // console.log(num_players, dice_per_player);
+    // await diceRollingSound();
     setlastClaim(initial_claim);
     setCount(1);
     setFace(1);
     setWildCardCalled(false);
     setCallFlag(false);
-    setDices(initialize_dices(num_players, dice_per_player));
-    setFacesVisible([true, false, false]);
+    setFacesVisible(initialize_dices_visibility(num_players));
+    let dices_info = initialize_dices(num_players, dice_per_player);
+    // await diceRollingAnimation(rotation, diceRollingSound);
+    setDices(dices_info.dices);
+    setNumDices(dices_info.num_dices);
     setplayerLastClaims(initialize_players_last_claims(num_players));
+    setRoundNum(indexLoser);
   }
 
-  function reset_game_state() {
+  async function reset_game_state() {
     console.log(`resetting game state`);
-    setplayerNames(initialize_player_names(num_players));
+    setGameNum(6);
+    await reset_round();
+    // setplayerNames(initialize_player_names(num_players));
     setPlayerScores(initialize_scores(num_players));
-    reset_round();
+    setResultsVisible(false);
   }
 }
